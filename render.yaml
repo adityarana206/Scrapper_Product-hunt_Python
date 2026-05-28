@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: producthunt-scraper-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    envVars:
+      - key: SUPABASE_URL
+        sync: false # Set this in Render dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false # Set this in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false # Set this in Render dashboard
+      - key: HEADLESS
+        value: "true"
