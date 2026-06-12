@@ -8,7 +8,7 @@ class ProductHuntScraper:
         self.session = None
 
     async def start(self):
-        self.session = AsyncSession(impersonate="chrome131")
+        self.session = AsyncSession(impersonate="chrome120")
 
     async def stop(self):
         if self.session:
@@ -18,34 +18,22 @@ class ProductHuntScraper:
         url = f"https://www.producthunt.com/@{username}"
         try:
             if not self.session:
-                self.session = AsyncSession(impersonate="chrome131")
+                self.session = AsyncSession(impersonate="chrome120")
 
-            response = await self.session.get(url, timeout=20)
-
-            if response.status_code == 404:
-                print(f"[scraper] @{username} not found (404)")
-                return None
-
+            response = await self.session.get(url, timeout=15)
             if response.status_code != 200:
-                print(f"[scraper] HTTP {response.status_code} for @{username}")
+                print(f"[scraper] Received status code {response.status_code} for @{username}")
                 return None
 
             html = response.text
-
             if "Just a moment" in html and "Cloudflare" in html:
-                print(f"[scraper] Cloudflare challenge for @{username}")
-                return None
-
-            # Minimal sanity check — logged-out profile pages always contain this
-            if "producthunt.com" not in html:
-                print(f"[scraper] Unexpected response for @{username}")
+                print(f"[scraper] Blocked by Cloudflare for @{username}")
                 return None
 
             soup = BeautifulSoup(html, "html.parser")
 
             if debug:
-                text = soup.get_text(separator=" ", strip=True)
-                print(f"[debug] @{username} text preview:\n{text[:600]}")
+                print(f"[debug] Body preview for @{username}:\n{soup.get_text(separator=' ', strip=True)[:500]}")
 
             streak = self._extract_streak(soup)
             avatar_url = self._extract_avatar(soup)
@@ -60,33 +48,24 @@ class ProductHuntScraper:
             return None
 
     def _extract_streak(self, soup: BeautifulSoup) -> int:
-        # Primary: the profile streak is inside <a href="/visit-streaks?ref=profile_page">.
-        # There is also a nav link with the same base path but ref=header_nav that has no number,
-        # so we must match specifically on "profile_page".
+        # The profile streak link has ref=profile_page (nav link has ref=header_nav — no number)
         streak_link = soup.find("a", href=lambda h: h and "visit-streaks" in h and "profile_page" in h)
         if streak_link:
-            link_text = streak_link.get_text(separator=" ", strip=True)
-            m = re.search(r"(\d+)", link_text)
+            m = re.search(r"(\d+)", streak_link.get_text(separator=" ", strip=True))
             if m:
                 return int(m.group(1))
             return 0
 
-        # Fallback: regex on visible page text (handles future PH HTML changes)
+        # Fallback: text patterns
         text = soup.get_text(separator=" ", strip=True)
-        for pattern in [
-            r"🔥\s*(\d+)\s*day\s*streak",
-            r"(\d+)\s*days?\s+streak",
-        ]:
+        for pattern in [r"🔥\s*(\d+)\s*day\s*streak", r"(\d+)\s*days?\s+streak", r"(\d+)\s*day\s*streak"]:
             m = re.search(pattern, text, re.IGNORECASE)
             if m:
                 return int(m.group(1))
-
-        # No streak → user has no active streak
         return 0
 
     def _extract_avatar(self, soup: BeautifulSoup) -> str | None:
-        # All Product Hunt user avatars are served from ph-avatars.imgix.net.
-        # The first matching img is always the profile picture (appears before badge images).
+        # All PH user avatars are served from ph-avatars.imgix.net
         for img in soup.find_all("img"):
             src = img.get("src", "")
             if "ph-avatars.imgix.net" in src:
@@ -102,5 +81,5 @@ class ProductHuntScraper:
             chunk_results = await asyncio.gather(*tasks)
             results.extend([r for r in chunk_results if r is not None])
             if i + chunk_size < len(usernames):
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(1)
         return results

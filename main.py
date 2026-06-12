@@ -20,6 +20,8 @@ def home():
 class ScrapeRequest(BaseModel):
     username_or_url: str
     debug: bool = False
+    full_name: str = ""
+    email: str = ""
 
 def clean_username(input_str: str) -> str:
     """Extracts username from a URL or @-handle."""
@@ -95,8 +97,8 @@ async def scrape_single_endpoint(request: ScrapeRequest):
             db_status = "skipped"
             try:
                 user_id = upsert_user({
-                    "full_name": username,
-                    "email": f"{username}@placeholder.com",
+                    "full_name": request.full_name or username,
+                    "email": request.email or f"{username}@placeholder.com",
                     "producthunt_username": username,
                     "producthunt_url": f"https://www.producthunt.com/@{username}",
                 })
