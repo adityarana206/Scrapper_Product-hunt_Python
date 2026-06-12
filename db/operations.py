@@ -8,6 +8,12 @@ def get_all_users():
     return result.data
 
 
+def get_all_registration_usernames():
+    supabase = get_supabase()
+    result = supabase.table("registrations").select("producthunt_username, full_name, email").execute()
+    return result.data or []
+
+
 def get_users_needing_update(hours_threshold: int = 24):
     supabase = get_supabase()
     result = supabase.table("users").select("*").execute()

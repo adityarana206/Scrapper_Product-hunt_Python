@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from scraper.producthunt import ProductHuntScraper
-from db.operations import get_all_users, update_streak, upsert_user
+from db.operations import get_all_users, get_all_registration_usernames, update_streak, upsert_user
 
 app = FastAPI(
     title="Product Hunt Scraper API",
@@ -37,11 +37,28 @@ async def scrape_all_users_endpoint():
 
     try:
         users = get_all_users()
+        existing_usernames = {u["producthunt_username"] for u in users if u.get("producthunt_username")}
+
+        # Also include registered students not yet in the users table
+        registrations = get_all_registration_usernames()
+        for reg in registrations:
+            uname = reg.get("producthunt_username", "").strip()
+            if uname and uname not in existing_usernames:
+                new_id = upsert_user({
+                    "full_name": reg.get("full_name") or uname,
+                    "email": reg.get("email") or f"{uname}@placeholder.com",
+                    "producthunt_username": uname,
+                    "producthunt_url": f"https://www.producthunt.com/@{uname}",
+                })
+                existing_usernames.add(uname)
+
+        # Re-fetch users so we have IDs for all (including newly upserted ones)
+        users = get_all_users()
         if not users:
             return {"message": "No users found in database."}
 
         usernames = [u["producthunt_username"] for u in users if u.get("producthunt_username")]
-        
+
         results = await scraper.scrape_batch(usernames)
         updated_count = 0
         updated_users = []
