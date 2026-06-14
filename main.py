@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from scraper.producthunt import ProductHuntScraper
-from db.operations import get_all_users, get_all_registration_usernames, update_streak, upsert_user
+from db.operations import get_all_users, get_all_registration_usernames, update_streak, upsert_user, update_registration_streak
 
 app = FastAPI(
     title="Product Hunt Scraper API",
@@ -38,46 +38,52 @@ async def scrape_all_users_endpoint():
     await scraper.start()
 
     try:
-        users = get_all_users()
-        existing_usernames = {u["producthunt_username"] for u in users if u.get("producthunt_username")}
-
-        # Also include registered students not yet in the users table
+        # Source of truth: registrations table only
         registrations = get_all_registration_usernames()
-        for reg in registrations:
-            uname = reg.get("producthunt_username", "").strip()
-            if uname and uname not in existing_usernames:
-                new_id = upsert_user({
+        targets = [
+            r for r in registrations
+            if r.get("producthunt_username", "").strip()
+        ]
+
+        if not targets:
+            return {"message": "No registered users found."}
+
+        usernames = [r["producthunt_username"].strip() for r in targets]
+        results = await scraper.scrape_batch(usernames)
+
+        updated_count = 0
+        updated_users = []
+
+        for r in results:
+            uname = r["producthunt_username"]
+            reg = next((t for t in targets if t["producthunt_username"] == uname), None)
+            if not reg:
+                continue
+
+            # 1. Update registrations table (streak only — no avatar_url column there)
+            update_registration_streak(uname, r["current_streak"])
+
+            # 2. Keep users table in sync (upsert then update streak)
+            try:
+                user_id = upsert_user({
                     "full_name": reg.get("full_name") or uname,
                     "email": reg.get("email") or f"{uname}@placeholder.com",
                     "producthunt_username": uname,
                     "producthunt_url": f"https://www.producthunt.com/@{uname}",
                 })
-                existing_usernames.add(uname)
+                update_streak(user_id, r["current_streak"], r["avatar_url"])
+            except Exception as e:
+                print(f"[scrape/all] users-table sync failed for @{uname}: {e}")
 
-        # Re-fetch users so we have IDs for all (including newly upserted ones)
-        users = get_all_users()
-        if not users:
-            return {"message": "No users found in database."}
-
-        usernames = [u["producthunt_username"] for u in users if u.get("producthunt_username")]
-
-        results = await scraper.scrape_batch(usernames)
-        updated_count = 0
-        updated_users = []
-
-        for r in results:
-            user = next((u for u in users if u["producthunt_username"] == r["producthunt_username"]), None)
-            if user:
-                update_streak(user["id"], r["current_streak"], r["avatar_url"])
-                updated_count += 1
-                updated_users.append({
-                    "username": r["producthunt_username"],
-                    "streak": r["current_streak"],
-                    "avatar_url": r["avatar_url"]
-                })
+            updated_count += 1
+            updated_users.append({
+                "username": uname,
+                "streak": r["current_streak"],
+                "avatar_url": r["avatar_url"]
+            })
 
         return {
-            "message": f"Successfully updated {updated_count} users.",
+            "message": f"Successfully updated {updated_count} / {len(targets)} registered users.",
             "updated_users": updated_users
         }
     except Exception as e:

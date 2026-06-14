@@ -74,6 +74,23 @@ def update_streak(user_id: str, streak_count: int, avatar_url: str | None):
     return streak_count
 
 
+def update_registration_streak(producthunt_username: str, streak_count: int):
+    supabase = get_supabase()
+
+    reg = supabase.table("registrations").select("id, highest_streak").eq("producthunt_username", producthunt_username).execute()
+    if not reg.data:
+        return
+
+    reg_id = reg.data[0]["id"]
+    current_highest = reg.data[0].get("highest_streak") or 0
+    highest = max(current_highest, streak_count)
+
+    supabase.table("registrations").update({
+        "current_streak": streak_count,
+        "highest_streak": highest,
+    }).eq("id", reg_id).execute()
+
+
 def bulk_insert_users(users: list[dict]):
     supabase = get_supabase()
     result = supabase.table("users").upsert(
