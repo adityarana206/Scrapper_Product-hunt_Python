@@ -21,12 +21,14 @@ def home():
 @app.get("/debug/ph")
 async def debug_ph():
     from curl_cffi.requests import AsyncSession
-    import curl_cffi
+    from scraper.producthunt import _build_url
+    import curl_cffi, os
     s = AsyncSession(impersonate="chrome131")
+    url = _build_url("rrhoover")
     try:
-        r = await s.get("https://www.producthunt.com/@rrhoover", timeout=15)
+        r = await s.get(url, timeout=30)
         blocked = "Just a moment" in r.text and "Cloudflare" in r.text
-        return {"status": r.status_code, "blocked": blocked, "curl_cffi": curl_cffi.__version__}
+        return {"status": r.status_code, "blocked": blocked, "curl_cffi": curl_cffi.__version__, "via_scraperapi": bool(os.getenv("SCRAPER_API_KEY"))}
     except Exception as e:
         return {"error": str(e), "curl_cffi": curl_cffi.__version__}
     finally:

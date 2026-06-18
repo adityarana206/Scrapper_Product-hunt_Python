@@ -1,7 +1,16 @@
 import re
+import os
 import asyncio
 from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
+
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
+
+def _build_url(username: str) -> str:
+    ph_url = f"https://www.producthunt.com/@{username}"
+    if SCRAPER_API_KEY:
+        return f"https://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={ph_url}&render=false"
+    return ph_url
 
 class ProductHuntScraper:
     def __init__(self):
@@ -15,12 +24,12 @@ class ProductHuntScraper:
             await self.session.close()
 
     async def scrape_profile(self, username: str, debug: bool = False) -> dict | None:
-        url = f"https://www.producthunt.com/@{username}"
+        url = _build_url(username)
         try:
             if not self.session:
                 self.session = AsyncSession(impersonate="chrome131")
 
-            response = await self.session.get(url, timeout=15)
+            response = await self.session.get(url, timeout=30)
             if response.status_code != 200:
                 print(f"[scraper] Received status code {response.status_code} for @{username}")
                 return None
@@ -48,7 +57,6 @@ class ProductHuntScraper:
             return None
 
     def _extract_streak(self, soup: BeautifulSoup) -> int:
-        # The profile streak link has ref=profile_page (nav link has ref=header_nav — no number)
         streak_link = soup.find("a", href=lambda h: h and "visit-streaks" in h and "profile_page" in h)
         if streak_link:
             m = re.search(r"(\d+)", streak_link.get_text(separator=" ", strip=True))
@@ -56,7 +64,6 @@ class ProductHuntScraper:
                 return int(m.group(1))
             return 0
 
-        # Fallback: text patterns
         text = soup.get_text(separator=" ", strip=True)
         for pattern in [r"🔥\s*(\d+)\s*day\s*streak", r"(\d+)\s*days?\s+streak", r"(\d+)\s*day\s*streak"]:
             m = re.search(pattern, text, re.IGNORECASE)
@@ -65,7 +72,6 @@ class ProductHuntScraper:
         return 0
 
     def _extract_avatar(self, soup: BeautifulSoup) -> str | None:
-        # All PH user avatars are served from ph-avatars.imgix.net
         for img in soup.find_all("img"):
             src = img.get("src", "")
             if "ph-avatars.imgix.net" in src:
