@@ -15,7 +15,22 @@ app = FastAPI(
 
 @app.get("/")
 def home():
-    return {"message": "Hello from Python Backend"}
+    import curl_cffi
+    return {"message": "Hello from Python Backend", "curl_cffi_version": curl_cffi.__version__}
+
+@app.get("/debug/ph")
+async def debug_ph():
+    from curl_cffi.requests import AsyncSession
+    import curl_cffi
+    s = AsyncSession(impersonate="chrome131")
+    try:
+        r = await s.get("https://www.producthunt.com/@rrhoover", timeout=15)
+        blocked = "Just a moment" in r.text and "Cloudflare" in r.text
+        return {"status": r.status_code, "blocked": blocked, "curl_cffi": curl_cffi.__version__}
+    except Exception as e:
+        return {"error": str(e), "curl_cffi": curl_cffi.__version__}
+    finally:
+        await s.close()
 
 class ScrapeRequest(BaseModel):
     username_or_url: str
