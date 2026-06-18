@@ -8,7 +8,7 @@ class ProductHuntScraper:
         self.session = None
 
     async def start(self):
-        self.session = AsyncSession(impersonate="chrome120")
+        self.session = AsyncSession(impersonate="chrome131")
 
     async def stop(self):
         if self.session:
@@ -18,7 +18,7 @@ class ProductHuntScraper:
         url = f"https://www.producthunt.com/@{username}"
         try:
             if not self.session:
-                self.session = AsyncSession(impersonate="chrome120")
+                self.session = AsyncSession(impersonate="chrome131")
 
             response = await self.session.get(url, timeout=15)
             if response.status_code != 200:
