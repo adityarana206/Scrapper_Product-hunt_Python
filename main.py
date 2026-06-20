@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, BackgroundTasks
 import uvicorn
 from pydantic import BaseModel
 from typing import Optional
@@ -49,64 +49,55 @@ def clean_username(input_str: str) -> str:
         input_str = input_str[1:]
     return input_str
 
-@app.post("/scrape/all")
-async def scrape_all_users_endpoint():
+async def _scrape_all_background(targets: list):
+    """Scrape all users one by one in the background (runs on Railway after 202 response)."""
     scraper = ProductHuntScraper()
     await scraper.start()
-
+    updated = 0
     try:
-        # Source of truth: registrations table only
-        registrations = get_all_registration_usernames()
-        targets = [
-            r for r in registrations
-            if r.get("producthunt_username", "").strip()
-        ]
-
-        if not targets:
-            return {"message": "No registered users found."}
-
-        usernames = [r["producthunt_username"].strip() for r in targets]
-        results = await scraper.scrape_batch(usernames)
-
-        updated_count = 0
-        updated_users = []
-
-        for r in results:
-            uname = r["producthunt_username"]
-            reg = next((t for t in targets if t["producthunt_username"] == uname), None)
-            if not reg:
-                continue
-
-            # 1. Update registrations table (streak only — no avatar_url column there)
-            update_registration_streak(uname, r["current_streak"])
-
-            # 2. Keep users table in sync (upsert then update streak)
+        for reg in targets:
+            uname = reg["producthunt_username"].strip()
             try:
-                user_id = upsert_user({
-                    "full_name": reg.get("full_name") or uname,
-                    "email": reg.get("email") or f"{uname}@placeholder.com",
-                    "producthunt_username": uname,
-                    "producthunt_url": f"https://www.producthunt.com/@{uname}",
-                })
-                update_streak(user_id, r["current_streak"], r["avatar_url"])
+                result = await scraper.scrape_profile(uname)
+                if not result:
+                    print(f"[scrape/all] No result for @{uname}, skipping")
+                    continue
+
+                update_registration_streak(uname, result["current_streak"])
+
+                try:
+                    user_id = upsert_user({
+                        "full_name": reg.get("full_name") or uname,
+                        "email": reg.get("email") or f"{uname}@placeholder.com",
+                        "producthunt_username": uname,
+                        "producthunt_url": f"https://www.producthunt.com/@{uname}",
+                    })
+                    update_streak(user_id, result["current_streak"], result["avatar_url"])
+                except Exception as e:
+                    print(f"[scrape/all] users-table sync failed for @{uname}: {e}")
+
+                updated += 1
+                print(f"[scrape/all] @{uname} → streak={result['current_streak']} ({updated}/{len(targets)})")
             except Exception as e:
-                print(f"[scrape/all] users-table sync failed for @{uname}: {e}")
-
-            updated_count += 1
-            updated_users.append({
-                "username": uname,
-                "streak": r["current_streak"],
-                "avatar_url": r["avatar_url"]
-            })
-
-        return {
-            "message": f"Successfully updated {updated_count} / {len(targets)} registered users.",
-            "updated_users": updated_users
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                print(f"[scrape/all] Error scraping @{uname}: {e}")
     finally:
         await scraper.stop()
+        print(f"[scrape/all] Done — {updated}/{len(targets)} updated.")
+
+
+@app.post("/scrape/all")
+async def scrape_all_users_endpoint(background_tasks: BackgroundTasks):
+    registrations = get_all_registration_usernames()
+    targets = [r for r in registrations if r.get("producthunt_username", "").strip()]
+
+    if not targets:
+        return {"message": "No registered users found."}
+
+    background_tasks.add_task(_scrape_all_background, targets)
+    return {
+        "message": f"Scrape started for {len(targets)} users (running in background, one by one).",
+        "count": len(targets),
+    }
 
 @app.post("/scrape/single")
 async def scrape_single_endpoint(request: ScrapeRequest):
