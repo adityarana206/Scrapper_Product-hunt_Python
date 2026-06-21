@@ -1,16 +1,42 @@
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body, BackgroundTasks
 import uvicorn
 from pydantic import BaseModel
 from typing import Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from scraper.producthunt import ProductHuntScraper
 from db.operations import get_all_users, get_all_registration_usernames, update_streak, upsert_user, update_registration_streak
 
+scheduler = AsyncIOScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(
+        _run_scheduled_scrape,
+        CronTrigger(hour=14, minute=0),  # 2:00 PM UTC daily (30 min after sheets sync)
+        id="daily_scrape",
+        replace_existing=True,
+    )
+    scheduler.start()
+    print("[SCHEDULER] Daily scrape job scheduled at 14:00 UTC")
+    yield
+    scheduler.shutdown()
+
+async def _run_scheduled_scrape():
+    print("[SCHEDULER] Starting scheduled scrape...")
+    registrations = get_all_registration_usernames()
+    targets = [r for r in registrations if r.get("producthunt_username", "").strip()]
+    if targets:
+        await _scrape_all_background(targets)
+
 app = FastAPI(
     title="Product Hunt Scraper API",
     description="API to scrape Product Hunt streaks and update the database.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 @app.get("/")
